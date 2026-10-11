@@ -8,11 +8,11 @@ From the repository root:
 
 ```bash
 node scripts/check-quiet-tools-runtime.mjs \
-  --pi-package-dir /Users/diegopetrucci/Developer/the-last-harness-fifth/node_modules/@earendil-works/pi-coding-agent \
+  --pi-package-dir "/absolute/path/to/pi-1.1.0/node_modules/@earendil-works/pi-coding-agent" \
   --prepare-seeded-smoke
 ```
 
-The script must report host `1.1.0`, a packaged candidate, a retained tool-owned smoke root, and a native footer check. It prints the exact regular and fullscreen commands plus a cleanup command. Copy those commands rather than substituting a normal/home profile or working directory.
+Replace the placeholder with the absolute installed package directory for the exact `@earendil-works/pi-coding-agent` 1.1.0 host being tested; do not use merely the collection development baseline. The script must report host `1.1.0`, a packaged candidate, a retained tool-owned smoke root, and a native footer check. It prints the exact regular and fullscreen commands plus a cleanup command. Copy those commands rather than substituting a normal/home profile or working directory.
 
 The saved JSONL includes native assistant `api`/`provider`/`model` metadata with zero usage and cost, successful output with recorded duration, an error, an aborted call, edit and write calls, an unregistered `mcp__` fallback, and an image result. The native `SessionManager` and `FooterComponent` consume this fixture offline with a minimal non-provider stub; no provider is registered and no credentials or model endpoint are added.
 

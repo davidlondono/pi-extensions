@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { AgentSession, ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
@@ -340,8 +342,7 @@ function isMcpCompatibleVersion(v: string | undefined): boolean {
   return patch >= 4;
 }
 
-// Safe runtime access to MCP/tool-search factories — feature-detected for Pi >=0.99.0 hosts.
-// Additionally gated on VERSION >=1.0.4: on older hosts mcp__* allowlist entries are exact-name
+// Gated on VERSION >=1.0.4: on older hosts mcp__* allowlist entries are exact-name
 // matches that resolve nothing, so spawning MCP servers provides no benefit.
 function createMcpSubagentFactories(): ExtensionFactory[] {
   const ns = piCodingAgent as Record<string, unknown>;
@@ -410,7 +411,12 @@ const SAFE_GIT_BRANCH_FLAGS = new Set([
   "--no-merged",
 ]);
 const SAFE_GIT_GLOBAL_FLAGS = new Set(["--no-pager", "--no-optional-locks"]);
-const SAFE_GIT_CONFIG_OVERRIDES = ["core.pager=cat", "core.fsmonitor=false", "diff.external="];
+const SAFE_GIT_CONFIG_OVERRIDES = [
+  "core.pager=cat",
+  "core.fsmonitor=false",
+  "diff.external=",
+  "log.showSignature=false",
+];
 const GIT_SUBCOMMAND_SAFE_FLAGS: Partial<Record<string, string[]>> = {
   blame: ["--no-textconv"],
   diff: ["--no-ext-diff", "--no-textconv"],
@@ -419,12 +425,6 @@ const GIT_SUBCOMMAND_SAFE_FLAGS: Partial<Record<string, string[]>> = {
   whatchanged: ["--no-ext-diff", "--no-textconv"],
 };
 const GIT_OPTIONS_REQUIRING_LOCAL_FILE = [
-  {
-    flag: "--contents",
-    blockedPrefixes: ["--con"],
-    reason:
-      "Code Reviewer bash blocks git --contents because it can read local files outside built-in path guards.",
-  },
   {
     flag: "--pathspec-from-file",
     blockedPrefixes: ["--pathspec"],
@@ -442,6 +442,15 @@ const GIT_SUBCOMMAND_OPTIONS_REQUIRING_LOCAL_FILE: Partial<
   Record<string, Array<{ reason: string; matches: (token: string) => boolean }>>
 > = {
   blame: [
+    {
+      reason:
+        "Code Reviewer bash blocks git blame --contents because it can read local files outside built-in path guards.",
+      matches: (token) => {
+        if (!token.startsWith("--")) return false;
+        const option = token.split("=", 1)[0]?.toLowerCase() ?? "";
+        return option === "--contents" || option.startsWith("--con");
+      },
+    },
     {
       reason:
         "Code Reviewer bash blocks git blame -S because it can read local revs files outside built-in path guards.",
@@ -948,6 +957,82 @@ function isInside(parent: string, child: string): boolean {
   );
 }
 
+const UNICODE_SPACES_PATTERN = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * Mirrors normalizeWindowsShellPath from dist/utils/paths.js. No-op on
+ * non-win32 paths.
+ */
+function normalizeWindowsShellPathLocal(filePath: string): string {
+  if (!filePath.startsWith("/") || filePath.startsWith("//") || filePath.includes("\\"))
+    return filePath;
+  const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+  if (!match) return filePath;
+  const suffix = match[2]?.replaceAll("/", "\\");
+  return `${match[1].toUpperCase()}:\\${suffix ?? ""}`;
+}
+
+/**
+ * Mirrors Pi's normalizePath (dist/utils/paths.js). On win32, Git Bash / WSL
+ * drive-path normalisation always runs; only tilde expansion is gated by
+ * expandTilde.
+ */
+function normalizePath(
+  input: string,
+  opts: { normalizeUnicodeSpaces?: boolean; stripAtPrefix?: boolean; expandTilde?: boolean } = {},
+): string {
+  const { normalizeUnicodeSpaces = false, stripAtPrefix = false, expandTilde = true } = opts;
+  let p = input;
+  if (normalizeUnicodeSpaces) p = p.replace(UNICODE_SPACES_PATTERN, " ");
+  if (stripAtPrefix && p.startsWith("@")) p = p.slice(1);
+  if (process.platform === "win32") p = normalizeWindowsShellPathLocal(p);
+  if (expandTilde) {
+    const home = os.homedir();
+    if (p === "~") p = home;
+    else if (p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\")))
+      p = path.join(home, p.slice(2));
+  }
+  if (/^file:\/\//.test(p)) p = fileURLToPath(p);
+  return p;
+}
+
+/**
+ * Mirrors Pi's resolveToCwd (dist/core/tools/path-utils.js). Exposed via
+ * __test__ for parity tests; not imported by other extensions.
+ */
+function resolveToCwd(rawPath: string, cwd: string): string {
+  const normalized = normalizePath(rawPath, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
+  const base = normalizePath(cwd);
+  return path.isAbsolute(normalized) ? path.resolve(normalized) : path.resolve(base, normalized);
+}
+
+/** Mirrors tryMacOSScreenshotPath from dist/core/tools/path-utils.js */
+function tryMacOSScreenshotPathVariant(filePath: string): string {
+  return filePath.replace(/ (AM|PM)\./gi, "\u202F$1.");
+}
+/** Mirrors tryNFDVariant from dist/core/tools/path-utils.js */
+function tryNFDPathVariant(filePath: string): string {
+  return filePath.normalize("NFD");
+}
+/** Mirrors tryCurlyQuoteVariant from dist/core/tools/path-utils.js */
+function tryCurlyQuotePathVariant(filePath: string): string {
+  return filePath.replace(/'/g, "\u2019");
+}
+/**
+ * Returns all read path candidates including Pi's resolveReadPathAsync fallback
+ * variants. Used only for the read tool guard; grep/find/ls use resolveToCwd only.
+ */
+function getReadPathCandidates(resolved: string): string[] {
+  const nfd = tryNFDPathVariant(resolved);
+  return [
+    resolved,
+    tryMacOSScreenshotPathVariant(resolved),
+    nfd,
+    tryCurlyQuotePathVariant(resolved),
+    tryCurlyQuotePathVariant(nfd),
+  ];
+}
+
 function resolveToolPath(cwd: string, rawPath: string | undefined): string {
   const input = rawPath?.trim() || ".";
   const normalized = input.startsWith("@") ? input.slice(1) : input;
@@ -969,10 +1054,33 @@ async function assertToolPathInsideCwd(
       return `${toolName} path must not traverse outside the local checkout.`;
     }
   }
+  // A path is allowed if it resolves inside EITHER the realpath'd root (root) OR
+  // the lexical cwd (lexicalCwd). This handles missing files in symlinked workspaces
+  // where realpath fails and the lexical fallback starts with the alias prefix.
   const root = await fs.realpath(cwd).catch(() => path.resolve(cwd));
+  const lexicalCwd = path.resolve(cwd);
   const resolved = resolveToolPath(cwd, rawPath);
   const realPath = await fs.realpath(resolved).catch(() => resolved);
-  if (!isInside(root, realPath)) return `${toolName} is limited to the local checkout: ${realPath}`;
+  if (!isInside(root, realPath) && !isInside(lexicalCwd, realPath))
+    return `${toolName} is limited to the local checkout: ${realPath}`;
+  // Pi-effective path check (monotonic: block if either resolution is outside).
+  // For the read tool, also check Pi's resolveReadPathAsync fallback variants so
+  // a missing file whose variant resolves outside is not silently allowed.
+  try {
+    const piResolved = resolveToCwd(typeof rawPath === "string" ? rawPath : ".", cwd);
+    const candidates = toolName === "read" ? getReadPathCandidates(piResolved) : [piResolved];
+    // Deliberate policy: all candidates are checked regardless of existence (not
+    // Pi's existence-ordered selection) so the guard cannot be raced by creating
+    // a variant between the hook and the read. Trade-off: a read is blocked when
+    // an escaping variant symlink sits next to a safe primary file.
+    for (const candidate of candidates) {
+      const candidateRealPath = await fs.realpath(candidate).catch(() => candidate);
+      if (!isInside(root, candidateRealPath) && !isInside(lexicalCwd, candidateRealPath))
+        return `${toolName} is limited to the local checkout: ${candidateRealPath}`;
+    }
+  } catch {
+    return `${toolName} path could not be resolved safely.`;
+  }
   return undefined;
 }
 
@@ -1665,10 +1773,8 @@ export const __test__ = {
   disposeSubagentSession,
   createCodeReviewerRuntimeGuardExtension,
   assertToolPathInsideCwd,
-  buildSystemPrompt,
-  buildUserPrompt,
+  resolveToCwd,
   buildSafeGitCommand,
-  formatToolCall,
   getBlockedBashReason,
   isModelAvailabilityError,
   normalizeThinkingLevel,

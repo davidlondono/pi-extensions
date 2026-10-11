@@ -57,7 +57,7 @@
 
 ## Public GitHub release
 
-- [ ] If separately authorized, create a **non-draft** GitHub release titled **MCP-aware subagents, always-on quiet tools, and reliability fixes**, using `docs/github-release-v0.1.77.md` as the exact body.
+- Release metadata/reference only: the later separately authorized action must create a **non-draft** GitHub release titled **MCP-aware subagents, always-on quiet tools, and reliability fixes**, using `docs/github-release-v0.1.77.md` as the exact body, and may execute only after the authorized verified-main-tree preflight and tag steps below.
 - [ ] Do not dispatch workflows or publish packages as part of this preparation; no current release action is authorized by this checklist.
 
 ## Agent-safe follow-up actions

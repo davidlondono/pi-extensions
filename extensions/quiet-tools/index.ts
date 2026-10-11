@@ -6,7 +6,7 @@ import {
   type ToolRendererResolver,
   type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { Container, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, Container, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const QUIET_TOOL_NAMES = new Set(["bash", "edit", "find", "grep", "ls", "read", "write"]);
 const MAX_MCP_ARG_LENGTH = 2000;
@@ -17,35 +17,90 @@ type ToolRenderCallParams = Parameters<ToolRenderCall>;
 type ToolRenderResultParams = Parameters<ToolRenderResult>;
 type RenderTheme = ToolRenderCallParams[1];
 type ToolRenderContext = ToolRenderCallParams[2];
-
-type TimerRenderState = {
+type QuietToolRenderContext = ToolRenderContext & {
+  durationMs?: number;
+  outputPad?: number;
+};
+type BashRenderState = {
   startedAt?: number;
   endedAt?: number;
   interval?: ReturnType<typeof setInterval>;
 };
 
-class QuietLinesRenderComponent extends Container {
-  private linesRenderer: ((width: number) => string[]) | undefined;
+type QuietLinesRenderer = (width: number) => string[];
 
-  setLinesRenderer(linesRenderer: (width: number) => string[]): void {
+class QuietLinesRenderComponent extends Container {
+  private linesRenderer: QuietLinesRenderer | undefined;
+
+  setLinesRenderer(linesRenderer: QuietLinesRenderer): void {
     this.linesRenderer = linesRenderer;
     this.invalidate();
   }
 
-  render(width: number): string[] {
+  protected renderLines(width: number): string[] {
     return this.linesRenderer?.(width).filter((line) => line) ?? [];
+  }
+
+  render(width: number): string[] {
+    return this.renderLines(width);
   }
 }
 
-class QuietCallRenderComponent extends QuietLinesRenderComponent {}
+class QuietCallRenderComponent extends QuietLinesRenderComponent {
+  private frame: Box | undefined;
+  private framePaddingX: number | undefined;
+
+  private readonly frameBody = {
+    render: (width: number) => this.renderLines(width),
+    invalidate: () => {},
+  };
+
+  setNativeFrame(theme: RenderTheme, context: QuietToolRenderContext): void {
+    const outputPad = getOutputPad(context);
+    if (!this.frame || this.framePaddingX !== outputPad) {
+      this.frame = new Box(outputPad, 1);
+      this.framePaddingX = outputPad;
+    }
+
+    const themeWithBackground = theme as RenderTheme & {
+      bg?: (kind: string, text: string) => string;
+    };
+    const backgroundKind = context.isPartial
+      ? "toolPendingBg"
+      : context.isError
+        ? "toolErrorBg"
+        : "toolSuccessBg";
+    const background = themeWithBackground.bg;
+    this.frame.setBgFn(
+      background ? (text) => background.call(themeWithBackground, backgroundKind, text) : undefined,
+    );
+  }
+
+  clearNativeFrame(): void {
+    this.frame = undefined;
+    this.framePaddingX = undefined;
+  }
+
+  render(width: number): string[] {
+    if (!this.frame) return super.render(width);
+
+    this.frame.clear();
+    this.frame.addChild(this.frameBody);
+    return this.frame.render(width);
+  }
+
+  invalidate(): void {
+    super.invalidate();
+    this.frame?.invalidate();
+  }
+}
+
 class QuietResultRenderComponent extends QuietLinesRenderComponent {}
 
 /**
  * Thrown from a delegating renderCall/renderResult slot when next() did not supply that slot.
- * Pi's ToolExecutionComponent catches renderer errors (all Pi versions >=1.0.1 that have
- * registerToolRenderer) and falls back to its native createCallFallback / createResultFallback,
- * which show tool-name + args for calls and the text output for results. Throwing here is
- * intentional: it lets Pi render its native fallback without us re-implementing it.
+ * Pi's ToolExecutionComponent catches renderer errors and falls back to its native
+ * createCallFallback/createResultFallback, which preserve the host's expanded behavior.
  */
 class QuietToolsDelegateToDefault extends Error {
   constructor() {
@@ -224,26 +279,46 @@ function formatExpandHint(theme: RenderTheme): string {
   return `${theme.fg("muted", "(")}${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 }
 
-function markToolTiming(options: ToolRenderResultParams[1], context: ToolRenderContext): void {
-  const state = context.state as TimerRenderState;
+function formatFailedMarker(theme: RenderTheme): string {
+  return theme.fg("error", " [failed]");
+}
 
-  if ((!options.isPartial || context.isError) && state.startedAt !== undefined) {
+function truncateQuietCallLine(line: string, status: string, width: number): string {
+  if (!status) return truncateToWidth(line, width, "...");
+  const statusWidth = visibleWidth(status);
+  if (statusWidth >= width) return truncateToWidth(status, width, "");
+  return `${truncateToWidth(line, width - statusWidth, "...")}${status}`;
+}
+
+function getOutputPad(context: QuietToolRenderContext): number {
+  const outputPad = context.outputPad;
+  if (typeof outputPad !== "number" || !Number.isFinite(outputPad)) return 1;
+  return Math.max(0, Math.floor(outputPad));
+}
+
+function finishBashTiming(
+  options: ToolRenderResultParams[1],
+  context: QuietToolRenderContext,
+): void {
+  const state = context.state as BashRenderState;
+
+  if (!options.isPartial || context.isError) {
     state.endedAt ??= Date.now();
-  }
-
-  if ((!options.isPartial || context.isError) && state.interval) {
-    clearInterval(state.interval);
-    state.interval = undefined;
+    if (state.interval) {
+      clearInterval(state.interval);
+      state.interval = undefined;
+    }
   }
 }
 
 function renderQuietCollapsedResult(
+  toolName: string,
   _result: ToolRenderResultParams[0],
   options: ToolRenderResultParams[1],
   _theme: RenderTheme,
-  context: ToolRenderContext,
+  context: QuietToolRenderContext,
 ): QuietResultRenderComponent {
-  markToolTiming(options, context);
+  if (toolName === "bash") finishBashTiming(options, context);
   const component =
     context.lastComponent instanceof QuietResultRenderComponent
       ? context.lastComponent
@@ -252,64 +327,86 @@ function renderQuietCollapsedResult(
   return component;
 }
 
-function createQuietResolver(getEnabled: () => boolean): ToolRendererResolver {
+function delegateCall(
+  nextRenderers: ToolRenderers | undefined,
+  args: ToolRenderCallParams[0],
+  theme: RenderTheme,
+  context: ToolRenderContext,
+): ReturnType<ToolRenderCall> {
+  if (!nextRenderers?.renderCall) throw new QuietToolsDelegateToDefault();
+  const delegateContext =
+    context.lastComponent instanceof QuietCallRenderComponent
+      ? { ...context, lastComponent: undefined }
+      : context;
+  return nextRenderers.renderCall(args, theme, delegateContext);
+}
+
+function delegateResult(
+  nextRenderers: ToolRenderers | undefined,
+  result: ToolRenderResultParams[0],
+  options: ToolRenderResultParams[1],
+  theme: RenderTheme,
+  context: ToolRenderContext,
+): ReturnType<ToolRenderResult> {
+  if (!nextRenderers?.renderResult) throw new QuietToolsDelegateToDefault();
+  const delegateContext =
+    context.lastComponent instanceof QuietResultRenderComponent
+      ? { ...context, lastComponent: undefined }
+      : context;
+  return nextRenderers.renderResult(result, options, theme, delegateContext);
+}
+
+export function createQuietResolver(): ToolRendererResolver {
   return (toolName, next) => {
     const isBuiltin = QUIET_TOOL_NAMES.has(toolName);
     const isMcp = toolName.startsWith("mcp__");
 
-    if (!isBuiltin && !isMcp) {
-      return next();
-    }
+    if (!isBuiltin && !isMcp) return next();
 
     const nextRenderers = next();
+    const usesNativeShell = nextRenderers?.renderShell === "self";
 
     return {
       renderShell: nextRenderers?.renderShell,
       renderCall(args, theme, context) {
-        if (!getEnabled() || context.expanded) {
-          if (!nextRenderers?.renderCall) {
-            throw new QuietToolsDelegateToDefault();
-          }
-          const delegateContext =
-            context.lastComponent instanceof QuietCallRenderComponent
-              ? { ...context, lastComponent: undefined }
-              : context;
-          return nextRenderers.renderCall(args, theme, delegateContext);
-        }
+        if (context.expanded) return delegateCall(nextRenderers, args, theme, context);
 
-        const state = context.state as TimerRenderState;
-        if (context.executionStarted && state.startedAt === undefined) {
-          state.startedAt = Date.now();
-          state.endedAt = undefined;
+        const quietContext = context as QuietToolRenderContext;
+        if (toolName === "bash") {
+          const state = quietContext.state as BashRenderState;
+          if (quietContext.executionStarted && state.startedAt === undefined) {
+            state.startedAt = Date.now();
+            state.endedAt = undefined;
+          }
         }
 
         const component =
           context.lastComponent instanceof QuietCallRenderComponent
             ? context.lastComponent
             : new QuietCallRenderComponent();
+        if (usesNativeShell) component.setNativeFrame(theme, quietContext);
+        else component.clearNativeFrame();
+
         const line = isBuiltin
           ? formatQuietCallLine(toolName, args, theme)
           : formatMcpCallLine(toolName, args, theme);
+        const status = quietContext.isError ? formatFailedMarker(theme) : "";
         const hint = formatExpandHint(theme);
         component.setLinesRenderer((width) => [
-          truncateToWidth(line, width, "..."),
+          truncateQuietCallLine(line, status, width),
           truncateToWidth(hint, width, "..."),
         ]);
         return component;
       },
       renderResult(result, options, theme, context) {
-        if (!getEnabled() || options.expanded) {
-          if (!nextRenderers?.renderResult) {
-            throw new QuietToolsDelegateToDefault();
-          }
-          const delegateContext =
-            context.lastComponent instanceof QuietResultRenderComponent
-              ? { ...context, lastComponent: undefined }
-              : context;
-          return nextRenderers.renderResult(result, options, theme, delegateContext);
-        }
-
-        return renderQuietCollapsedResult(result, options, theme, context);
+        if (options.expanded) return delegateResult(nextRenderers, result, options, theme, context);
+        return renderQuietCollapsedResult(
+          toolName,
+          result,
+          options,
+          theme,
+          context as QuietToolRenderContext,
+        );
       },
     };
   };
@@ -320,18 +417,23 @@ export const __testing = {
   formatQuietCallLine,
   formatMcpCallLine,
   createQuietResolver,
+  QuietCallRenderComponent,
+  QuietResultRenderComponent,
   QuietToolsDelegateToDefault,
 };
 
+const STATUS_MESSAGE =
+  "Quiet tool previews are always on. Collapsed built-in and MCP tool rows show a one-line invocation and hide output until expanded. Model-visible tool results are unchanged.";
+const FALLBACK_STATUS_MESSAGE =
+  "Quiet tool previews are inactive: this Pi host lacks registerToolRenderer (requires Pi >=1.0.1).";
+const STATUS_USAGE = "Usage: /quiet-tools status";
+
 export default function quietToolsExtension(pi: ExtensionAPI) {
-  let enabled = true;
   let notifiedFallback = false;
 
   const hasRenderer = typeof (pi as any).registerToolRenderer === "function";
 
-  if (hasRenderer) {
-    pi.registerToolRenderer(createQuietResolver(() => enabled));
-  }
+  if (hasRenderer) pi.registerToolRenderer(createQuietResolver());
 
   pi.on("session_start", async (_event, ctx) => {
     if (!hasRenderer && !notifiedFallback) {
@@ -344,54 +446,17 @@ export default function quietToolsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("quiet-tools", {
-    description: "Toggle one-line collapsed invocations for built-in and MCP tool rows",
+    description: "Show always-on one-line collapsed invocations for built-in and MCP tool rows",
     getArgumentCompletions: (prefix) => {
-      const commands = ["on", "off", "toggle", "status"];
       const query = prefix.trim().toLowerCase();
-      const matches = commands.filter((command) => command.startsWith(query));
-      return matches.length > 0 ? matches.map((value) => ({ value, label: value })) : null;
+      return "status".startsWith(query) ? [{ value: "status", label: "status" }] : null;
     },
     handler: async (args, ctx) => {
-      const action = args.trim().toLowerCase() || "toggle";
-
-      if (action === "on" || action === "enable") {
-        enabled = true;
-        ctx.ui.notify(
-          "Quiet tool previews enabled: collapsed built-in and MCP tool rows show a one-line invocation plus an expand hint.",
-          "info",
-        );
+      if (!args.trim() || args.trim().toLowerCase() === "status") {
+        ctx.ui.notify(hasRenderer ? STATUS_MESSAGE : FALLBACK_STATUS_MESSAGE, "info");
         return;
       }
-
-      if (action === "off" || action === "disable") {
-        enabled = false;
-        ctx.ui.notify(
-          "Quiet tool previews disabled: restored pi's standard tool renderers.",
-          "info",
-        );
-        return;
-      }
-
-      if (action === "toggle") {
-        enabled = !enabled;
-        ctx.ui.notify(
-          enabled
-            ? "Quiet tool previews enabled: collapsed built-in and MCP tool rows show a one-line invocation plus an expand hint."
-            : "Quiet tool previews disabled: restored pi's standard tool renderers.",
-          "info",
-        );
-        return;
-      }
-
-      if (action === "status") {
-        ctx.ui.notify(
-          `Quiet tool previews are ${enabled ? "enabled" : "disabled"}. Collapsed tool rows ${enabled ? "show a one-line invocation and hide output until expanded" : "use pi's default rendering"}. Model-visible tool results are unchanged.`,
-          "info",
-        );
-        return;
-      }
-
-      ctx.ui.notify("Usage: /quiet-tools on | off | toggle | status", "warning");
+      ctx.ui.notify(STATUS_USAGE, "warning");
     },
   });
 }

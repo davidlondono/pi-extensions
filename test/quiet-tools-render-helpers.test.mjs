@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createBashToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
+import {
+  createBashToolDefinition,
+  createEditToolDefinition,
+  initTheme,
+} from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "..");
@@ -15,6 +20,7 @@ const {
   formatQuietCallLine,
   formatMcpCallLine,
   createQuietResolver,
+  QuietCallRenderComponent,
   QuietToolsDelegateToDefault,
 } = quietToolsModule.__testing;
 initTheme("dark");
@@ -26,7 +32,45 @@ const theme = {
   bold(text) {
     return `*${text}*`;
   },
+  bg(kind, text) {
+    return `<bg:${kind}>${text}</bg:${kind}>`;
+  },
 };
+
+function context(overrides = {}) {
+  return {
+    expanded: false,
+    executionStarted: false,
+    argsComplete: true,
+    cwd: repoRoot,
+    invalidate: () => {},
+    lastComponent: undefined,
+    state: {},
+    isPartial: true,
+    isError: false,
+    durationMs: undefined,
+    outputPad: 1,
+    ...overrides,
+  };
+}
+
+const quietToolCases = new Map([
+  ["bash", { command: "echo hello" }],
+  ["edit", { file_path: "README.md" }],
+  ["find", { pattern: "src/**/*.ts" }],
+  ["grep", { pattern: "TODO" }],
+  ["ls", { path: "." }],
+  ["read", { path: "README.md" }],
+  ["write", { path: "README.md", content: "" }],
+]);
+
+const bashResult = { content: [{ type: "text", text: "ok" }], details: {}, isError: false };
+
+function makeQuietBashRenderers() {
+  const bash = createBashToolDefinition(repoRoot);
+  const resolver = createQuietResolver();
+  return resolver("bash", () => bash);
+}
 
 test("quiet-tools strips ANSI and control characters before building one-line summaries", () => {
   assert.equal(
@@ -43,7 +87,7 @@ test("quiet-tools formats focused call summaries for built-in tools without mult
   const cases = [
     {
       toolName: "bash",
-      args: { command: 'printf \"\u001b[31mhi\u001b[0m\tthere\"', timeout: 5 },
+      args: { command: 'printf "\u001b[31mhi\u001b[0m\tthere"', timeout: 5 },
       expected:
         '<toolTitle>*$*</toolTitle> <toolTitle>*printf "hi there"*</toolTitle><muted> (timeout 5s)</muted>',
     },
@@ -91,34 +135,25 @@ test("formatMcpCallLine renders tool name + compact JSON args on one line", () =
     formatMcpCallLine("mcp__server__tool", { key: "value" }, theme),
     '<toolTitle>*mcp__server__tool*</toolTitle> <toolOutput>{"key":"value"}</toolOutput>',
   );
-  // JSON.stringify encodes actual newlines/tabs as \n/\t escape sequences (already single-line)
-  // sanitizeInlineText then leaves those escape sequences as-is (not actual control chars)
   assert.equal(
     formatMcpCallLine("mcp__server__tool", { msg: "line1\nline2\ttab" }, theme),
     '<toolTitle>*mcp__server__tool*</toolTitle> <toolOutput>{"msg":"line1\\nline2\\ttab"}</toolOutput>',
   );
-  // null args renders just the tool name
   assert.equal(
     formatMcpCallLine("mcp__server__tool", null, theme),
     "<toolTitle>*mcp__server__tool*</toolTitle>",
   );
-  // undefined args renders just the tool name
   assert.equal(
     formatMcpCallLine("mcp__server__tool", undefined, theme),
     "<toolTitle>*mcp__server__tool*</toolTitle>",
   );
-  // ANSI codes: JSON.stringify encodes ESC as \u001b (6 chars), which is already safe/visible
-  assert.equal(
-    formatMcpCallLine("mcp__s__t", { x: "\u001b[31mred\u001b[0m" }, theme),
-    '<toolTitle>*mcp__s__t*</toolTitle> <toolOutput>{"x":"\\u001b[31mred\\u001b[0m"}</toolOutput>',
-  );
 });
 
-test("createQuietResolver quiets collapsed built-in rows and delegates when expanded", () => {
+test("createQuietResolver quiets all seven built-ins and delegates expanded rows", () => {
   const baseCall = { type: "base-call", render: () => [] };
   const baseResult = { type: "base-result", render: () => [] };
   const nextRenderers = {
-    renderShell: "self",
+    renderShell: "default",
     renderCall() {
       return baseCall;
     },
@@ -126,463 +161,354 @@ test("createQuietResolver quiets collapsed built-in rows and delegates when expa
       return baseResult;
     },
   };
+  const resolver = createQuietResolver();
 
-  let enabled = true;
-  const resolver = createQuietResolver(() => enabled);
-  const renderers = resolver("bash", () => nextRenderers);
-
-  assert.ok(renderers, "resolver returns renderers for built-in tool");
-  assert.equal(renderers.renderShell, "self", "renderShell is preserved from next");
-
-  // Collapsed call: quiet 2-line preview
-  const collapsedCall = renderers.renderCall({ command: "echo hello" }, theme, {
-    expanded: false,
-    executionStarted: true,
-    lastComponent: undefined,
-    state: {},
-  });
-  const collapsedLines = collapsedCall.render(200);
-  assert.equal(collapsedLines.length, 2, "collapsed built-in: 2 lines");
-  assert.match(collapsedLines[1], /to expand/, "expand hint present");
-
-  // Expanded call: delegates to next
-  assert.equal(
-    renderers.renderCall({}, theme, {
-      expanded: true,
-      executionStarted: false,
-      lastComponent: undefined,
-      state: {},
-    }),
-    baseCall,
-    "expanded call delegates to next",
-  );
-
-  // Collapsed result: empty
-  const collapsedResult = renderers.renderResult(
-    { content: [], details: {} },
-    { expanded: false, isPartial: false },
-    theme,
-    { isError: false, lastComponent: undefined, state: { startedAt: Date.now() } },
-  );
-  assert.deepEqual(collapsedResult.render(200), [], "collapsed result renders empty");
-
-  // Expanded result: delegates to next
-  assert.equal(
-    renderers.renderResult(
-      { content: [], details: {} },
-      { expanded: true, isPartial: false },
+  for (const [toolName, args] of quietToolCases) {
+    const renderers = resolver(toolName, () => nextRenderers);
+    assert.ok(renderers, `${toolName}: resolver returns renderers`);
+    const collapsed = renderers.renderCall(args, theme, context());
+    assert.equal(collapsed.render(200).length, 2, `${toolName}: collapsed call has two lines`);
+    assert.match(collapsed.render(200)[1], /to expand/, `${toolName}: expand hint present`);
+    assert.equal(
+      renderers.renderCall(args, theme, context({ expanded: true })),
+      baseCall,
+      `${toolName}: expanded call delegates`,
+    );
+    assert.equal(
+      renderers.renderResult(
+        { content: [], details: {} },
+        { expanded: true, isPartial: false },
+        theme,
+        context({ expanded: true }),
+      ),
+      baseResult,
+      `${toolName}: expanded result delegates`,
+    );
+    const hiddenText = `secret ${toolName} output`;
+    const collapsedResult = renderers.renderResult(
+      { content: [{ type: "text", text: hiddenText }], details: {} },
+      { expanded: false, isPartial: false },
       theme,
-      { isError: false, lastComponent: undefined, state: {} },
-    ),
-    baseResult,
-    "expanded result delegates to next",
-  );
+      context({ isPartial: false }),
+    );
+    assert.ok(
+      !collapsedResult.render(200).join("\n").includes(hiddenText),
+      `${toolName}: collapsed result text stays hidden`,
+    );
+  }
 });
 
-test("createQuietResolver quiets collapsed mcp__ rows with sanitized compact args", () => {
-  let enabled = true;
-  const resolver = createQuietResolver(() => enabled);
+test("createQuietResolver quiets collapsed mcp__ rows and leaves unrelated tools untouched", () => {
+  const resolver = createQuietResolver();
   const renderers = resolver("mcp__my_server__do_thing", () => undefined);
+  assert.ok(renderers, "mcp__ tool: resolver returns renderers");
 
-  assert.ok(renderers, "resolver returns renderers for mcp__ tool");
-
-  // Collapsed call with args: shows tool name + compact JSON
-  const collapsedCall = renderers.renderCall({ input: "hello\nworld" }, theme, {
-    expanded: false,
-    executionStarted: false,
-    lastComponent: undefined,
-    state: {},
-  });
-  const lines = collapsedCall.render(200);
-  assert.equal(lines.length, 2, "mcp collapsed call: 2 lines");
-  assert.match(lines[0], /mcp__my_server__do_thing/, "tool name in first line");
-  // JSON.stringify encodes actual newline to \n escape sequence — stays single-line
-  assert.match(lines[0], /hello/, "arg content present in first line");
-  assert.match(lines[1], /to expand/, "expand hint present");
-
-  // Collapsed result: empty
-  const collapsedResult = renderers.renderResult(
-    { content: [], details: {} },
-    { expanded: false, isPartial: false },
+  const collapsed = renderers.renderCall(
+    { input: "hello\nworld" },
     theme,
-    { isError: false, lastComponent: undefined, state: { startedAt: Date.now() } },
+    context({ executionStarted: true }),
   );
-  assert.deepEqual(collapsedResult.render(200), [], "mcp collapsed result renders empty");
-});
+  const lines = collapsed.render(200);
+  assert.equal(lines.length, 2, "mcp collapsed call has two lines");
+  assert.match(lines[0], /mcp__my_server__do_thing/, "mcp tool name present");
+  assert.match(lines[0], /hello/, "mcp arg content present");
+  assert.match(lines[1], /to expand/, "mcp expand hint present");
 
-test("createQuietResolver delegates to next() at render time when quiet is toggled off", () => {
-  let enabled = true;
-  const resolver = createQuietResolver(() => enabled);
-
-  const nextCall = { type: "next-call", render: () => [] };
-  const nextResult = { type: "next-result", render: () => [] };
-  const nextRenderers = {
-    renderCall() {
-      return nextCall;
-    },
-    renderResult() {
-      return nextResult;
-    },
-  };
-
-  // Resolver is called once per row at row-creation time
-  const renderers = resolver("bash", () => nextRenderers);
-
-  // Initially quiet
-  const quietCall = renderers.renderCall({ command: "echo" }, theme, {
-    expanded: false,
-    executionStarted: false,
-    lastComponent: undefined,
-    state: {},
-  });
-  assert.equal(quietCall.render(200).length, 2, "initially quiet: 2 lines");
-
-  // Toggle off at render time — same renderers object, flag read fresh each call
-  enabled = false;
-  const delegatedCall = renderers.renderCall({ command: "echo" }, theme, {
-    expanded: false,
-    executionStarted: false,
-    lastComponent: undefined,
-    state: {},
-  });
-  assert.equal(delegatedCall, nextCall, "after quiet off: delegates to next at render time");
-
-  const delegatedResult = renderers.renderResult(
-    { content: [], details: {} },
-    { expanded: false, isPartial: false },
-    theme,
-    { isError: false, lastComponent: undefined, state: { startedAt: Date.now() } },
-  );
-  assert.equal(
-    delegatedResult,
-    nextResult,
-    "after quiet off: result delegates to next at render time",
-  );
-});
-
-test("createQuietResolver passes through for non-builtin non-mcp__ tools", () => {
-  const resolver = createQuietResolver(() => true);
   const nextRenderers = {
     renderCall() {
       return { type: "next" };
     },
   };
-
-  // Returns next() directly for unrelated tools
-  const result = resolver("my_custom_tool", () => nextRenderers);
-  assert.equal(result, nextRenderers, "non-builtin non-mcp__ tool: returns next() directly");
-
-  // Also for tools that start with mcp but not mcp__
-  const result2 = resolver("mcpserver", () => nextRenderers);
   assert.equal(
-    result2,
+    resolver("my_custom_tool", () => nextRenderers),
     nextRenderers,
-    "tool starting with mcp but not mcp__: returns next() directly",
+    "unrelated tools pass through",
+  );
+  assert.equal(
+    resolver("mcpserver", () => nextRenderers),
+    nextRenderers,
+    "mcp names without the namespace separator pass through",
   );
 });
 
-test("createQuietResolver handles next() returning undefined: collapsed is quiet, delegating slots throw sentinel", () => {
-  const resolver = createQuietResolver(() => true);
-  const renderers = resolver("mcp__server__tool", () => undefined);
+test("createQuietResolver stays always on and marks collapsed errors", () => {
+  const resolver = createQuietResolver();
+  const renderers = resolver("bash", () => undefined);
+  const collapsed = renderers.renderCall(
+    { command: "false" },
+    theme,
+    context({ isPartial: false, isError: true }),
+  );
+  const lines = collapsed.render(200);
+  assert.equal(lines.length, 2, "failed rows retain the compact two-line shape");
+  assert.match(lines[0], /\[failed\]/, "failed marker is visible");
 
-  assert.ok(renderers, "returns renderers even when next() is undefined");
-  assert.equal(renderers.renderShell, undefined, "renderShell is undefined when next is undefined");
+  const result = renderers.renderResult(
+    { content: [{ type: "text", text: "secret error detail" }], details: {} },
+    { expanded: false, isPartial: false },
+    theme,
+    context({ isPartial: false, isError: true }),
+  );
+  assert.deepEqual(result.render(200), [], "collapsed result remains hidden");
+});
 
-  // Collapsed call still renders 2 lines (quiet path is taken, sentinel not thrown)
-  const collapsedCall = renderers.renderCall({ key: "val" }, theme, {
-    expanded: false,
-    executionStarted: false,
-    lastComponent: undefined,
-    state: {},
-  });
+test("failed markers reserve width before truncating long collapsed calls", () => {
+  const resolver = createQuietResolver();
+  const renderers = resolver("mcp__server__very_long_tool_name", () => undefined);
+  const component = renderers.renderCall(
+    { argument: "x".repeat(200) },
+    theme,
+    context({ isPartial: false, isError: true }),
+  );
+
+  const normalWidth = component.render(30)[0];
+  assert.match(normalWidth, /\[failed\]/, "width 30 keeps the failed marker visible");
+  for (const width of [1, 2, 3, 4, 8, 30]) {
+    for (const line of component.render(width)) {
+      assert.ok(visibleWidth(line) <= width, `failed row fits width ${width}`);
+    }
+  }
+});
+
+test("native self-shell edit rows get host framing and never adopt the quiet wrapper", () => {
+  const edit = createEditToolDefinition(repoRoot);
+  const resolver = createQuietResolver();
+  const renderers = resolver("edit", () => edit);
+  assert.equal(renderers.renderShell, "self", "edit keeps its native self-render shell");
+
+  const state = {};
+  const args = {
+    path: "README.md",
+    edits: [{ oldText: "# pi-extensions", newText: "# pi extensions" }],
+  };
+  const collapsed = renderers.renderCall(
+    args,
+    theme,
+    context({ state, outputPad: 0, isPartial: true }),
+  );
+  assert.ok(
+    collapsed instanceof QuietCallRenderComponent,
+    "quiet call wrapper remains identifiable",
+  );
+  const padZeroLines = collapsed.render(80);
+  assert.equal(padZeroLines.length, 4, "native self shell has top/bottom framing");
+  assert.match(padZeroLines[0], /toolPendingBg/, "pending native background is preserved");
+  assert.match(
+    padZeroLines[1],
+    /<bg:toolPendingBg><toolTitle>/,
+    "zero horizontal padding is applied",
+  );
+  assert.equal(state.callComponent, undefined, "quiet path does not mutate native edit state");
+
+  const failed = renderers.renderCall(
+    args,
+    theme,
+    context({ state, lastComponent: collapsed, outputPad: 1, isPartial: false, isError: true }),
+  );
+  const padOneLines = failed.render(80);
+  assert.match(padOneLines[0], /toolErrorBg/, "error native background is preserved");
+  assert.match(padOneLines.join("\n"), /\[failed\]/, "collapsed edit errors are marked");
+  assert.match(padOneLines[1], /<bg:toolErrorBg> <toolTitle>/, "one horizontal pad is applied");
   assert.equal(
-    collapsedCall.render(200).length,
-    2,
-    "collapsed call: 2 lines even with undefined next",
+    state.callComponent,
+    undefined,
+    "failed quiet path still leaves native edit state alone",
   );
 
-  // Expanded call with no next renderCall: throws QuietToolsDelegateToDefault so Pi uses
-  // createCallFallback (formatToolCallWithArgs — tool name + args, respects expanded)
+  const expanded = renderers.renderCall(
+    args,
+    theme,
+    context({ state, expanded: true, lastComponent: failed, isPartial: false }),
+  );
+  assert.notEqual(expanded, failed, "expanded edit gets a native component");
+  assert.notEqual(state.callComponent, failed, "native edit never adopts the quiet wrapper");
+});
+
+test("expanded delegation clears only quiet last components", () => {
+  const resolver = createQuietResolver();
+  let receivedContext;
+  const native = {
+    renderCall(_args, _theme, received) {
+      receivedContext = received;
+      return { type: "native-call" };
+    },
+    renderResult(_result, _options, _theme, received) {
+      receivedContext = received;
+      return { type: "native-result" };
+    },
+  };
+  const renderers = resolver("bash", () => native);
+  const quietCall = renderers.renderCall({ command: "echo" }, theme, context());
+  assert.equal(
+    renderers.renderCall({}, theme, context({ expanded: true, lastComponent: quietCall })).type,
+    "native-call",
+  );
+  assert.equal(
+    receivedContext.lastComponent,
+    undefined,
+    "quiet call state is not passed to native",
+  );
+
+  const nativeLast = { type: "native-call" };
+  assert.equal(
+    renderers.renderCall({}, theme, context({ expanded: true, lastComponent: nativeLast })).type,
+    "native-call",
+  );
+  assert.equal(receivedContext.lastComponent, nativeLast, "native call state remains intact");
+
+  const quietResult = renderers.renderResult(
+    { content: [], details: {} },
+    { expanded: false, isPartial: false },
+    theme,
+    context({ isPartial: false }),
+  );
+  assert.equal(
+    renderers.renderResult(
+      { content: [], details: {} },
+      { expanded: true, isPartial: false },
+      theme,
+      context({ expanded: true, lastComponent: quietResult }),
+    ).type,
+    "native-result",
+  );
+  assert.equal(
+    receivedContext.lastComponent,
+    undefined,
+    "quiet result state is not passed to native",
+  );
+});
+
+test("unregistered mcp__ expanded slots throw the Pi fallback sentinel", () => {
+  const resolver = createQuietResolver();
+  const renderers = resolver("mcp__server__tool", () => undefined);
+  assert.equal(renderers.renderShell, undefined);
   assert.throws(
-    () =>
-      renderers.renderCall({}, theme, {
-        expanded: true,
-        executionStarted: false,
-        lastComponent: undefined,
-        state: {},
-      }),
+    () => renderers.renderCall({}, theme, context({ expanded: true })),
     QuietToolsDelegateToDefault,
-    "expanded call with no next renderCall throws sentinel for Pi fallback",
   );
-
-  // Quiet-off call with no next renderCall: also throws sentinel
-  const resolver2 = createQuietResolver(() => false);
-  const renderers2 = resolver2("mcp__server__tool", () => undefined);
-  assert.throws(
-    () =>
-      renderers2.renderCall({}, theme, {
-        expanded: false,
-        executionStarted: false,
-        lastComponent: undefined,
-        state: {},
-      }),
-    QuietToolsDelegateToDefault,
-    "quiet-off call with no next renderCall throws sentinel for Pi fallback",
-  );
-
-  // Expanded result with no next renderResult: throws sentinel so Pi uses createResultFallback
   assert.throws(
     () =>
       renderers.renderResult(
         { content: [], details: {} },
         { expanded: true, isPartial: false },
         theme,
-        { isError: false, lastComponent: undefined, state: {} },
+        context({ expanded: true, isPartial: false }),
       ),
     QuietToolsDelegateToDefault,
-    "expanded result with no next renderResult throws sentinel for Pi fallback",
   );
 });
 
-test("formatMcpCallLine: circular and BigInt args render a placeholder without throwing via collapsed render path", () => {
-  const resolver = createQuietResolver(() => true);
-
+test("MCP argument formatting remains bounded for circular, BigInt, and huge values", () => {
+  const resolver = createQuietResolver();
   function renderCollapsedLine(args) {
     const renderers = resolver("mcp__s__t", () => undefined);
-    const comp = renderers.renderCall(args, theme, {
-      expanded: false,
-      executionStarted: false,
-      lastComponent: undefined,
-      state: {},
-    });
-    return comp.render(200);
+    return renderers.renderCall(args, theme, context()).render(200);
   }
 
-  // Circular object: JSON.stringify throws → placeholder
   const circular = {};
   circular.self = circular;
   const circularLines = renderCollapsedLine(circular);
-  assert.equal(circularLines.length, 2, "circular: 2 lines rendered");
-  assert.match(circularLines[0], /\[…\]/, "circular: placeholder present in first line");
+  assert.match(circularLines[0], /\[…\]/, "circular args use a placeholder");
 
-  // BigInt in object: JSON.stringify throws → placeholder
   const bigintLines = renderCollapsedLine({ n: 42n });
-  assert.equal(bigintLines.length, 2, "BigInt: 2 lines rendered");
-  assert.match(bigintLines[0], /\[…\]/, "BigInt: placeholder present in first line");
+  assert.match(bigintLines[0], /\[…\]/, "BigInt args use a placeholder");
+
+  const hugeLines = renderCollapsedLine({ data: "x".repeat(1_000_000) });
+  assert.ok(hugeLines[0].length < 1000, "huge args are bounded before rendering");
 });
 
-test("formatMcpCallLine: ~1 MB string arg renders bounded output via collapsed render path", () => {
-  const resolver = createQuietResolver(() => true);
-  const hugeArg = { data: "x".repeat(1_000_000) };
-  const renderers = resolver("mcp__s__t", () => undefined);
-  const comp = renderers.renderCall(hugeArg, theme, {
-    expanded: false,
-    executionStarted: false,
-    lastComponent: undefined,
-    state: {},
+test("timing state follows native bash ownership and supports live partial-to-done/error", (t) => {
+  const renderers = makeQuietBashRenderers();
+  const state = {};
+  t.after(() => {
+    if (state.interval) clearInterval(state.interval);
   });
-  const lines = comp.render(200);
-  assert.equal(lines.length, 2, "huge arg: 2 lines rendered");
-  assert.ok(
-    lines[0].length < 1000,
-    `huge arg: output length ${lines[0].length} must be bounded (well under 1 MB)`,
+
+  renderers.renderCall(
+    { command: "echo hello" },
+    theme,
+    context({ state, executionStarted: true }),
   );
-  assert.ok(
-    !lines[0].includes("x".repeat(2001)),
-    "huge arg: output must not contain the uncapped string",
-  );
-});
+  assert.equal(typeof state.startedAt, "number", "collapsed bash call starts native timing");
 
-test("createQuietResolver timing state: tracks startedAt and clears interval on final result", () => {
-  const resolver = createQuietResolver(() => true);
-  const renderers = resolver("read", () => ({
-    renderCall() {
-      return { render: () => [] };
-    },
-    renderResult() {
-      return { render: () => [] };
-    },
-  }));
-
-  const state = {
-    startedAt: undefined,
-    endedAt: undefined,
-    interval: setInterval(() => {}, 100000),
-  };
-
-  // Partial collapsed result: keeps interval alive
   renderers.renderResult(
-    { content: [], details: {} },
+    bashResult,
     { expanded: false, isPartial: true },
     theme,
-    { isError: false, lastComponent: undefined, state },
+    context({ state, isPartial: true }),
   );
-  assert.ok(state.interval, "partial: interval kept alive");
+  assert.equal(
+    state.interval,
+    undefined,
+    "collapsed partial bash result does not create a redundant refresh interval",
+  );
 
-  // Set startedAt to simulate call having started
-  state.startedAt = Date.now();
+  renderers.renderResult(
+    { ...bashResult, isError: true },
+    { expanded: false, isPartial: false },
+    theme,
+    context({ state, isPartial: false, isError: true }),
+  );
+  assert.equal(state.interval, undefined, "error completion clears the native interval");
+  assert.equal(typeof state.endedAt, "number", "error completion stamps native endedAt");
+});
 
-  // Final collapsed result: clears interval and sets endedAt
+test("timing state is untouched for non-bash quiet tools", (t) => {
+  const resolver = createQuietResolver();
+  const renderers = resolver("read", () => undefined);
+  const state = {
+    startedAt: 10,
+    endedAt: 20,
+    interval: setInterval(() => {}, 100000),
+  };
+  t.after(() => clearInterval(state.interval));
+
+  renderers.renderCall({ path: "README.md" }, theme, context({ state, executionStarted: true }));
   renderers.renderResult(
     { content: [], details: {} },
     { expanded: false, isPartial: false },
     theme,
-    { isError: false, lastComponent: undefined, state },
+    context({ state, isPartial: false }),
   );
-  assert.equal(state.interval, undefined, "final: interval cleared");
-  assert.ok(state.endedAt, "final: endedAt set");
+  assert.deepEqual(state, { startedAt: 10, endedAt: 20, interval: state.interval });
 });
 
-test("createQuietResolver next() lacking renderCall/renderResult throws sentinel for Pi fallback", () => {
-  const resolver = createQuietResolver(() => true);
-  // nextRenderers exists but has no renderCall or renderResult
-  const renderers = resolver("mcp__s__t", () => ({ renderShell: "default" }));
+test("delegated bash timers are cleared when a running row finishes collapsed", (t) => {
+  for (const isError of [false, true]) {
+    const renderers = makeQuietBashRenderers();
+    const state = {};
+    t.after(() => {
+      if (state.interval) clearInterval(state.interval);
+    });
 
-  assert.equal(renderers.renderShell, "default", "renderShell preserved from next");
+    renderers.renderCall(
+      { command: "echo hello" },
+      theme,
+      context({ state, expanded: true, executionStarted: true }),
+    );
+    renderers.renderResult(
+      bashResult,
+      { expanded: true, isPartial: true },
+      theme,
+      context({ state, expanded: true, isPartial: true, invalidate: () => {} }),
+    );
+    assert.ok(state.interval, "native expanded bash starts its timer");
 
-  // Expanded call: next has no renderCall at all
-  // Pi will catch QuietToolsDelegateToDefault and use createCallFallback instead
-  assert.throws(
-    () =>
-      renderers.renderCall({}, theme, {
-        expanded: true,
-        executionStarted: false,
-        lastComponent: undefined,
-        state: {},
-      }),
-    QuietToolsDelegateToDefault,
-    "expanded call with next lacking renderCall throws sentinel",
-  );
-
-  // Expanded result: next has no renderResult
-  // Pi will catch QuietToolsDelegateToDefault and use createResultFallback instead
-  assert.throws(
-    () =>
-      renderers.renderResult(
-        { content: [], details: {} },
-        { expanded: true, isPartial: false },
-        theme,
-        { isError: false, lastComponent: undefined, state: {} },
-      ),
-    QuietToolsDelegateToDefault,
-    "expanded result with next lacking renderResult throws sentinel",
-  );
-});
-
-const bashResult = { content: [{ type: "text", text: "ok" }] };
-
-// Returns resolver-wrapped renderers backed by the real Pi 1.0.4 bash renderers.
-// Pi's bash renderer manages state.startedAt, state.endedAt, and state.interval
-// inside context.state; the quiet resolver reads and mutates the same object via
-// markToolTiming when it takes the collapsed quiet path.
-function makeQuietBashRenderers() {
-  const bash = createBashToolDefinition(repoRoot);
-  const resolver = createQuietResolver(() => true);
-  return resolver("bash", () => bash);
-}
-
-test("quiet-tools clears the delegated bash timer when a running row finishes collapsed", (t) => {
-  // Risk: a row starts running while expanded (delegated to Pi's bash renderer, which sets
-  // state.interval via setInterval). If the final result arrives while the row is collapsed,
-  // the resolver takes the quiet path and must clear that live interval via markToolTiming.
-  // With createQuietResolver this is guaranteed by construction: the quiet renderResult path
-  // always calls markToolTiming(options, context) which clears state.interval unconditionally
-  // on any non-partial final result, regardless of how the interval was created.
-  const renderers = makeQuietBashRenderers();
-  const state = {};
-  t.after(() => {
-    if (state.interval) clearInterval(state.interval);
-  });
-
-  // Expanded call: delegates to Pi, which sets state.startedAt
-  renderers.renderCall({ command: "echo hello" }, theme, {
-    expanded: true,
-    executionStarted: true,
-    lastComponent: undefined,
-    state,
-  });
-  // Expanded partial result: delegates to Pi, which sets state.interval
-  renderers.renderResult(bashResult, { expanded: true, isPartial: true }, theme, {
-    isError: false,
-    lastComponent: undefined,
-    invalidate: () => {},
-    state,
-  });
-  assert.equal(typeof state.interval, "object", "Pi bash sets interval on partial expanded result");
-
-  // Final result arrives while collapsed: resolver takes quiet path, markToolTiming clears interval
-  const collapsedFinal = renderers.renderResult(
-    bashResult,
-    { expanded: false, isPartial: false },
-    theme,
-    { isError: false, lastComponent: undefined, state },
-  );
-  assert.deepEqual(collapsedFinal.render(200), [], "collapsed final renders empty");
-  assert.equal(state.interval, undefined, "interval cleared by quiet path markToolTiming");
-  assert.equal(typeof state.endedAt, "number", "endedAt stamped by quiet path markToolTiming");
-});
-
-test("quiet-tools keeps collapsed bash timing so a later expand is not Took 0.0s", (t) => {
-  // Risk: a row runs entirely while collapsed (resolver sets state.startedAt and state.endedAt).
-  // When the row later expands, Pi's bash renderResult must see those timestamps and display the
-  // real elapsed duration rather than recalculating from scratch. Pi uses `??=` for endedAt, so
-  // it preserves the value the quiet path already wrote; startedAt is only written once (when
-  // undefined), so it also survives the expand. The invariant is testable end-to-end here.
-  const renderers = makeQuietBashRenderers();
-  const state = {};
-  t.after(() => {
-    if (state.interval) clearInterval(state.interval);
-  });
-
-  // Collapsed call: resolver (quiet path) sets state.startedAt
-  renderers.renderCall({ command: "echo hello" }, theme, {
-    expanded: false,
-    executionStarted: true,
-    lastComponent: undefined,
-    state,
-  });
-  assert.equal(typeof state.startedAt, "number", "resolver sets startedAt on collapsed call");
-  // Rewind to simulate a 10-second run
-  state.startedAt = Date.now() - 10_000;
-
-  // Collapsed final result: quiet path, markToolTiming stamps endedAt
-  const collapsedFinal = renderers.renderResult(
-    bashResult,
-    { expanded: false, isPartial: false },
-    theme,
-    { isError: false, lastComponent: undefined, state },
-  );
-  assert.deepEqual(collapsedFinal.render(200), [], "collapsed final renders empty");
-  const startedAt = state.startedAt;
-  const endedAt = state.endedAt;
-  assert.equal(typeof endedAt, "number", "endedAt set by quiet path");
-  assert.ok(endedAt - startedAt >= 9_000, "elapsed time >= 9s preserved in state");
-
-  // Expand: Pi's bash renderCall does not reset startedAt (already set, guard is `=== undefined`)
-  renderers.renderCall({ command: "echo hello" }, theme, {
-    expanded: true,
-    executionStarted: true,
-    lastComponent: undefined,
-    state,
-  });
-  assert.equal(state.startedAt, startedAt, "startedAt unchanged after expand");
-
-  // Expanded final result: Pi's bash renderResult uses `endedAt ??= Date.now()`, so it preserves
-  // the value already written by the quiet path. The rendered "Took Xs" uses startedAt/endedAt
-  // from state, giving the real elapsed duration.
-  const expandedFinal = renderers.renderResult(
-    bashResult,
-    { expanded: true, isPartial: false },
-    theme,
-    { isError: false, lastComponent: undefined, invalidate: () => {}, state },
-  );
-  assert.equal(state.startedAt, startedAt, "startedAt still unchanged after expanded result");
-  assert.equal(state.endedAt, endedAt, "endedAt preserved (Pi uses ??= so quiet value wins)");
-  const durationSeconds = ((endedAt - startedAt) / 1000).toFixed(1);
-  assert.notEqual(durationSeconds, "0.0", "elapsed duration is not zero");
-  assert.match(
-    expandedFinal.render(80).join("\n"),
-    new RegExp(`Took ${durationSeconds.replace(".", "\\.")}s`),
-    "expanded result shows real elapsed duration",
-  );
+    renderers.renderResult(
+      { ...bashResult, isError },
+      { expanded: false, isPartial: false },
+      theme,
+      context({ state, isPartial: false, isError }),
+    );
+    assert.equal(
+      state.interval,
+      undefined,
+      `${isError ? "error" : "success"} collapse clears native timer`,
+    );
+    assert.equal(
+      typeof state.endedAt,
+      "number",
+      `${isError ? "error" : "success"} collapse stamps native end time`,
+    );
+  }
 });

@@ -151,87 +151,41 @@ test("quiet-tools resolver delegates to next() when expanded", () => {
   assert.equal(result, nextCall, "expanded call delegates to next()");
 });
 
-test("quiet-tools /quiet-tools off and on toggle quiet rendering at render time", async () => {
+test("quiet-tools /quiet-tools status is read-only and rendering stays always on", async () => {
   const harness = createExtensionHarness();
   quietToolsExtension(harness.pi);
 
   const { ctx, notifications } = createCommandContext();
   const command = getQuietToolsCommand(harness);
+  assert.deepEqual(command.getArgumentCompletions(""), [{ value: "status", label: "status" }]);
+  assert.deepEqual(command.getArgumentCompletions("sta"), [{ value: "status", label: "status" }]);
+  assert.equal(command.getArgumentCompletions("on"), null, "obsolete controls are not completed");
 
-  // Initially enabled: collapsed renders 2 lines
-  const linesEnabled = simulateCollapsedCall(harness, "bash", { command: "echo" });
-  assert.equal(linesEnabled?.length, 2, "initially enabled: 2-line quiet preview");
+  const before = simulateCollapsedCall(harness, "bash", { command: "echo" });
+  assert.equal(before?.length, 2, "always-on quiet preview has two lines");
 
-  await command.handler("off", ctx);
-
-  // After off: collapsed delegates to next (which is undefined → fallback), not 2 quiet lines
-  // The resolver still exists; behaviour changes at render time
-  const resolver = harness.toolRendererResolvers[0];
-  const nextCall = { type: "next", render: () => ["one line"] };
-  const renderers = resolver("bash", () => ({
-    renderCall() {
-      return nextCall;
-    },
-  }));
-  const delegatedResult = renderers.renderCall({ command: "echo" }, theme, {
-    expanded: false,
-    executionStarted: false,
-    argsComplete: true,
-    cwd: repoRoot,
-    lastComponent: undefined,
-    state: {},
-  });
-  assert.equal(
-    delegatedResult,
-    nextCall,
-    "after quiet off: collapsed call delegates to next at render time",
-  );
-
+  await command.handler("", ctx);
+  await command.handler("status", ctx);
   await command.handler("on", ctx);
-
-  // After on: quiet again
-  const linesRenabled = simulateCollapsedCall(harness, "bash", { command: "echo" });
-  assert.equal(linesRenabled?.length, 2, "after quiet on: 2-line quiet preview restored");
-
-  assert.deepEqual(notifications, [
-    {
-      message: "Quiet tool previews disabled: restored pi's standard tool renderers.",
-      level: "info",
-    },
-    {
-      message:
-        "Quiet tool previews enabled: collapsed built-in and MCP tool rows show a one-line invocation plus an expand hint.",
-      level: "info",
-    },
-  ]);
-});
-
-test("quiet-tools /quiet-tools toggle and status commands notify the user", async () => {
-  const harness = createExtensionHarness();
-  quietToolsExtension(harness.pi);
-
-  const { ctx, notifications } = createCommandContext();
-  const command = getQuietToolsCommand(harness);
-
-  await command.handler("status", ctx);
+  await command.handler("off", ctx);
   await command.handler("toggle", ctx);
-  await command.handler("status", ctx);
 
+  const after = simulateCollapsedCall(harness, "bash", { command: "echo" });
+  assert.deepEqual(after, before, "obsolete command arguments cannot change rendering");
   assert.deepEqual(notifications, [
     {
       message:
-        "Quiet tool previews are enabled. Collapsed tool rows show a one-line invocation and hide output until expanded. Model-visible tool results are unchanged.",
-      level: "info",
-    },
-    {
-      message: "Quiet tool previews disabled: restored pi's standard tool renderers.",
+        "Quiet tool previews are always on. Collapsed built-in and MCP tool rows show a one-line invocation and hide output until expanded. Model-visible tool results are unchanged.",
       level: "info",
     },
     {
       message:
-        "Quiet tool previews are disabled. Collapsed tool rows use pi's default rendering. Model-visible tool results are unchanged.",
+        "Quiet tool previews are always on. Collapsed built-in and MCP tool rows show a one-line invocation and hide output until expanded. Model-visible tool results are unchanged.",
       level: "info",
     },
+    { message: "Usage: /quiet-tools status", level: "warning" },
+    { message: "Usage: /quiet-tools status", level: "warning" },
+    { message: "Usage: /quiet-tools status", level: "warning" },
   ]);
 });
 
@@ -269,7 +223,7 @@ test("quiet-tools fallback: no registerToolRenderer → registers no resolver, n
   assert.equal(notifications.length, 1, "not notified again on subsequent session_start");
 });
 
-test("quiet-tools fallback: /quiet-tools commands still work without rendering effect", async () => {
+test("quiet-tools fallback: status remains read-only without rendering support", async () => {
   const harness = createExtensionHarness();
   delete harness.pi.registerToolRenderer;
 
@@ -277,11 +231,17 @@ test("quiet-tools fallback: /quiet-tools commands still work without rendering e
 
   const command = getQuietToolsCommand(harness);
   assert.ok(command, "command is registered even on fallback host");
+  assert.deepEqual(command.getArgumentCompletions(""), [{ value: "status", label: "status" }]);
 
   const { ctx, notifications } = createCommandContext();
-  await command.handler("toggle", ctx);
-  assert.equal(notifications.length, 1, "toggle still notifies");
-
+  await command.handler("", ctx);
   await command.handler("status", ctx);
-  assert.equal(notifications.length, 2, "status still notifies");
+  await command.handler("toggle", ctx);
+  assert.equal(notifications.length, 3, "status and obsolete arguments only notify");
+  assert.equal(notifications[0].level, "info");
+  assert.match(notifications[0].message, /inactive/);
+  assert.match(notifications[0].message, /requires Pi >=1\.0\.1/);
+  assert.equal(notifications[1].level, "info");
+  assert.equal(notifications[1].message, notifications[0].message);
+  assert.equal(notifications[2].level, "warning");
 });

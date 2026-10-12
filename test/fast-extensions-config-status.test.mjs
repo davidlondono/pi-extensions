@@ -30,12 +30,6 @@ for (const leftover of leftovers) {
     const sessionStart = harness.handlers.get("session_start");
     const notifications = [];
     const statuses = [];
-    const payload = {
-      model: "gpt-5.5",
-      input: "hello",
-      service_tier: "default",
-      speed: "standard",
-    };
     const model = {
       provider: "anthropic",
       api: "anthropic-messages",
@@ -67,12 +61,6 @@ for (const leftover of leftovers) {
     assert.match(notifications[0].message, leftover.notice);
     assert.match(notifications[0].message, /unified fast extension \(\/fast\)/);
     assert.equal(notifications[0].level, "warning");
-    assert.deepEqual(payload, {
-      model: "gpt-5.5",
-      input: "hello",
-      service_tier: "default",
-      speed: "standard",
-    });
     assert.deepEqual(model.headers, { "Anthropic-Beta": "existing-beta,oauth-2025-04-20" });
 
     const quiet = [];

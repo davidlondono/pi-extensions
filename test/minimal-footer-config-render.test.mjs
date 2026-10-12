@@ -451,6 +451,47 @@ test("minimal-footer loadConfig prefers trusted project config over global confi
   });
 });
 
+test("minimal-footer defaults dumb-zone threshold to 300k and warns only above the threshold", (t) => {
+  const { projectDir } = setupTempDirs(t);
+  const config = loadConfig({
+    cwd: projectDir,
+    isProjectTrusted() {
+      return false;
+    },
+  });
+
+  assert.equal(config.context.dumbZone.thresholdTokens, 300000);
+
+  const render = (footerConfig, tokens) =>
+    renderFooterLines({
+      width: 80,
+      cwd: projectDir,
+      config: footerConfig,
+      branch: "main",
+      contextUsage: { percent: 50, tokens },
+      modelId: "fixture-model",
+      modelProvider: "anthropic",
+      thinkingLevel: "off",
+      theme: plainTheme,
+    }).join("\n");
+
+  assert.doesNotMatch(render(config, 300000), /DUMB ZONE/);
+  assert.match(render(config, 300001), /DUMB ZONE/);
+
+  const customConfig = {
+    ...config,
+    context: {
+      ...config.context,
+      dumbZone: {
+        ...config.context.dumbZone,
+        thresholdTokens: 150000,
+      },
+    },
+  };
+  assert.doesNotMatch(render(customConfig, 150000), /DUMB ZONE/);
+  assert.match(render(customConfig, 150001), /DUMB ZONE/);
+});
+
 test("minimal-footer loadConfig falls back when project config is malformed or contains invalid values", (t) => {
   const { agentDir, projectDir } = setupTempDirs(t);
   const projectConfigPath = path.join(projectDir, CONFIG_DIR_NAME, "minimal-footer.json");

@@ -77,17 +77,9 @@ function normalizeWindowsShellPathLocal(filePath: string): string {
 }
 
 /**
- * Mirrors Pi's normalizePath (dist/utils/paths.js).
- *
- * Options (all default false/true as noted):
- *   normalizeUnicodeSpaces — replace Unicode space characters with ASCII space.
- *   stripAtPrefix         — strip a leading "@" path sigil.
- *   expandTilde           — expand "~"/"~/" to homedir (default true).
- *
- * On win32, Git Bash / WSL drive-path normalisation always runs (not gated
- * by expandTilde); only the tilde expansion itself is gated by expandTilde.
- * Always resolves "file://" URLs via fileURLToPath; throws for non-local hosts
- * (e.g. file://hostname/…) or invalid URLs.
+ * Mirrors Pi's normalizePath (dist/utils/paths.js). On win32, Git Bash / WSL
+ * drive-path normalisation always runs; only tilde expansion is gated by
+ * expandTilde.
  */
 function normalizePath(
   input: string,
@@ -797,6 +789,28 @@ async function confirmProtectedPathAction(
   );
 }
 
+async function confirmLexicalOrResolvedPath(
+  toolName: "write" | "edit",
+  normalizedPath: NormalizedPath,
+  ctx: ConfirmationContext & { cwd?: string },
+): Promise<GuardDecision> {
+  // Monotonic hardening: also check via Pi-style path resolution against ctx.cwd.
+  // OR logic: protected if EITHER the lexical check OR the Pi-resolved check matches.
+  // When only the Pi-resolved check catches a path, show the resolved absolute path in
+  // the reason so the user understands why the plain-looking path is protected.
+  const lexicalProtected = isProtectedPath(normalizedPath);
+  const piResult = checkPiResolvedPath(normalizedPath.original, ctx.cwd ?? process.cwd());
+  const piAlsoProtected = piResult.status === "protected" || piResult.status === "error";
+  const displaySuffix = lexicalProtected
+    ? undefined
+    : piResult.status === "protected"
+      ? ` (resolves to ${piResult.resolvedPath})`
+      : piResult.status === "error"
+        ? " (path could not be resolved)"
+        : undefined;
+  return confirmProtectedPathAction(toolName, normalizedPath, ctx, piAlsoProtected, displaySuffix);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "bash" || event.toolName === "powershell") {
@@ -824,60 +838,14 @@ export default function (pi: ExtensionAPI) {
       return undefined;
     }
 
-    if (event.toolName === "write") {
-      const normalizedPath = validateWriteInput(event.input);
+    if (event.toolName === "write" || event.toolName === "edit") {
+      const toolName = event.toolName;
+      const normalizedPath =
+        toolName === "write" ? validateWriteInput(event.input) : validateEditInput(event.input);
       if (!normalizedPath) {
-        return { block: true, reason: "Malformed write input blocked" };
+        return { block: true, reason: `Malformed ${toolName} input blocked` };
       }
-      // Monotonic hardening: also check via Pi-style path resolution against ctx.cwd.
-      // OR logic: protected if EITHER the lexical check OR the Pi-resolved check matches.
-      // When only the Pi-resolved check catches a path, show the resolved absolute path in
-      // the reason so the user understands why the plain-looking path is protected.
-      const lexicalProtected = isProtectedPath(normalizedPath);
-      const piResult = checkPiResolvedPath(normalizedPath.original, ctx.cwd ?? process.cwd());
-      const piAlsoProtected = piResult.status === "protected" || piResult.status === "error";
-      const displaySuffix = lexicalProtected
-        ? undefined
-        : piResult.status === "protected"
-          ? ` (resolves to ${piResult.resolvedPath})`
-          : piResult.status === "error"
-            ? " (path could not be resolved)"
-            : undefined;
-      return confirmProtectedPathAction(
-        "write",
-        normalizedPath,
-        ctx,
-        piAlsoProtected,
-        displaySuffix,
-      );
-    }
-
-    if (event.toolName === "edit") {
-      const normalizedPath = validateEditInput(event.input);
-      if (!normalizedPath) {
-        return { block: true, reason: "Malformed edit input blocked" };
-      }
-      // Monotonic hardening: also check via Pi-style path resolution against ctx.cwd.
-      // OR logic: protected if EITHER the lexical check OR the Pi-resolved check matches.
-      // When only the Pi-resolved check catches a path, show the resolved absolute path in
-      // the reason so the user understands why the plain-looking path is protected.
-      const lexicalProtected = isProtectedPath(normalizedPath);
-      const piResult = checkPiResolvedPath(normalizedPath.original, ctx.cwd ?? process.cwd());
-      const piAlsoProtected = piResult.status === "protected" || piResult.status === "error";
-      const displaySuffix = lexicalProtected
-        ? undefined
-        : piResult.status === "protected"
-          ? ` (resolves to ${piResult.resolvedPath})`
-          : piResult.status === "error"
-            ? " (path could not be resolved)"
-            : undefined;
-      return confirmProtectedPathAction(
-        "edit",
-        normalizedPath,
-        ctx,
-        piAlsoProtected,
-        displaySuffix,
-      );
+      return confirmLexicalOrResolvedPath(toolName, normalizedPath, ctx);
     }
 
     return undefined;

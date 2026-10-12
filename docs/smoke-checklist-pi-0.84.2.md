@@ -30,8 +30,8 @@
    FAIL: error notification appears, browser does not open, or the report page is blank.
 
 6. **quiet-tools** — Run `/quiet-tools status`, then ask pi to list the files in the current directory (triggering an `ls` tool call).<br>
-   PASS: session start showed a one-time notice that quiet rendering is inactive below Pi 1.0.1; `/quiet-tools status` reports enabled; the `ls` row stays a native Pi row.<br>
-   FAIL: the one-time notice is missing, `/quiet-tools status` reports disabled, or the `ls` row collapses to a quiet one-line summary.
+   PASS: session start showed a one-time notice that quiet rendering is inactive below Pi 1.0.1; `/quiet-tools status` reports "Quiet tool previews are inactive: this Pi host lacks registerToolRenderer (requires Pi >=1.0.1)."; the `ls` row stays a native Pi row.<br>
+   FAIL: a missing quiet-tools notice, a collapsed quiet `ls` row, or any status text claiming an on/off state.
 
 7. **oracle streaming** — Run `/oracle status` to confirm the oracle is configured, then send a short coding question (e.g. "What does this file export?"). Watch the oracle response stream in the transcript.<br>
    PASS: oracle response text appears incrementally as it streams; the final message is complete and readable with no missing chunks.<br>

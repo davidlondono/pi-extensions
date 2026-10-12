@@ -62,11 +62,11 @@
 
 ## Agent-safe follow-up actions
 
-- [ ] Obtain separate approval before creating a commit for this four-document reconciliation; the prior commit/push/PR approval applied to PR149 and its smoke-path fix only.
-- [ ] If separately approved, create a docs-only follow-up commit on the current non-`main` branch `reconcile-v0.1.77-release-docs`; do not recreate merged PR149.
-- [ ] If separately approved, push `reconcile-v0.1.77-release-docs` and open a pull request targeting `main`.
-- [ ] Wait for the required CI and CodeQL checks to pass, then merge the documentation follow-up into `main`.
-- [ ] Verify that `main` points to the merged documentation follow-up and that no intervening merge occurred before tagging.
+- [x] Obtain separate approval before creating a commit for this four-document reconciliation; the prior commit/push/PR approval applied to PR149 and its smoke-path fix only.
+- [x] If separately approved, create a docs-only follow-up commit on the current non-`main` branch `reconcile-v0.1.77-release-docs`; do not recreate merged PR149.
+- [x] If separately approved, push `reconcile-v0.1.77-release-docs` and open a pull request targeting `main`.
+- [x] Wait for the required CI and CodeQL checks to pass, then merge the documentation follow-up into `main`.
+- [x] Verify that `main` points to the merged documentation follow-up and that no intervening merge occurred before tagging.
 - [ ] **Before tagging, and only after separate authorization, run the final verified-main-tree preflight:** `npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org`; `npm run preflight:install-state`; `npm pack --dry-run --ignore-scripts --json --workspace extensions/quiet-tools`; `npm pack --dry-run --ignore-scripts --json`; and `npm pack --dry-run --ignore-scripts --json --workspaces`. Require all five commands to pass before tagging. This documents future execution only, authorizes none now, and was not executed in this task.
 - [ ] Tag that verified `main` commit as `v0.1.77` and push the tag.
 - [ ] Create the non-draft GitHub release with the exact title above and the exact body in `docs/github-release-v0.1.77.md`.

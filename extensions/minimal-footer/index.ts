@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: MinimalFooterConfig = {
     showPercent: true,
     dumbZone: {
       enabled: true,
-      thresholdTokens: 200_000,
+      thresholdTokens: 300_000,
       label: "DUMB ZONE",
       color: "error",
     },

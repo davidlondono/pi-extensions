@@ -143,7 +143,6 @@ type MinimalMessage = {
   customType?: string;
   display?: boolean;
   summary?: string;
-  fromId?: string;
   tokensBefore?: number;
   command?: string;
   output?: string;
@@ -165,7 +164,6 @@ type MinimalEntry = {
   display?: boolean;
   details?: unknown;
   summary?: string;
-  fromId?: string;
   tokensBefore?: number;
   firstKeptEntryId?: string;
 };
@@ -192,7 +190,6 @@ type Segment = {
   source: string;
   role: string;
   tokens: number;
-  chars: number;
   turn: number;
   sequence: number;
   entryId?: string;
@@ -230,13 +227,9 @@ type AggregateStat = {
 
 type DatasetStats = {
   tokens: number;
-  rawTokens: number;
-  visibleRawTokens: number;
   excludedTokens: number;
   providerDeltaTokens: number;
   estimatorOverageTokens: number;
-  reconciliationScale: number;
-  segmentCount: number;
   messageCount: number;
   categories: CategoryStat[];
   topSegments: Segment[];
@@ -259,7 +252,6 @@ type RoutedModel = {
 };
 
 type ReportData = {
-  generatedAt: string;
   cwd: string;
   session: {
     id?: string;
@@ -507,7 +499,6 @@ function addTextSegment(
     source: base.source,
     role: base.role,
     tokens,
-    chars,
     turn: base.turn ?? state.turn,
     entryId: base.entryId,
     timestamp: base.timestamp,
@@ -543,7 +534,6 @@ function addImageSegment(
     source: base.source,
     role: base.role,
     tokens: IMAGE_TOKEN_ESTIMATE,
-    chars: IMAGE_TOKEN_ESTIMATE * 4,
     turn: base.turn ?? state.turn,
     entryId: base.entryId,
     timestamp: base.timestamp,
@@ -820,7 +810,6 @@ function contextEntryToMessage(entry: MinimalEntry): MinimalMessage | undefined 
     return {
       role: "branchSummary",
       summary: entry.summary,
-      fromId: entry.fromId,
       timestamp: entry.timestamp ? new Date(entry.timestamp).getTime() : undefined,
     };
   }
@@ -1110,13 +1099,9 @@ function finalizeDataset(
     segments,
     stats: {
       tokens: Math.round(displayTotal),
-      rawTokens: Math.round(segments.reduce((sum, segment) => sum + segment.tokens, 0)),
-      visibleRawTokens: Math.round(visibleRawTokens),
       excludedTokens: Math.round(excludedTokens),
       providerDeltaTokens,
       estimatorOverageTokens,
-      reconciliationScale,
-      segmentCount: segments.length,
       messageCount,
       categories,
       topSegments: [...visibleSegments].sort((a, b) => b.tokens - a.tokens).slice(0, 24),
@@ -1250,7 +1235,6 @@ function buildReportData(
   }
 
   return {
-    generatedAt: new Date().toISOString(),
     cwd: options.redact ? "[redacted cwd]" : ctx.cwd,
     session: {
       id: options.redact ? "[redacted session]" : safeCall(() => ctx.sessionManager.getSessionId()),
@@ -1368,16 +1352,12 @@ function buildHtml(data: ReportData): string {
 	color-scheme: dark;
 	--bg: #070a12;
 	--panel: rgba(15, 23, 42, 0.72);
-	--panel-strong: rgba(15, 23, 42, 0.94);
 	--line: rgba(148, 163, 184, 0.18);
 	--text: #e5edf7;
 	--muted: #94a3b8;
 	--dim: #64748b;
 	--accent: #8b5cf6;
 	--accent-2: #06b6d4;
-	--good: #22c55e;
-	--warn: #f59e0b;
-	--bad: #ef4444;
 	--shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
 }
 * { box-sizing: border-box; }
@@ -1588,7 +1568,6 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: #cbd5e1; 
 		for (const [key, value] of Object.entries(attrs)) {
 			if (key === 'class') node.className = value;
 			else if (key === 'text') node.textContent = value;
-			else if (key === 'html') node.innerHTML = value;
 			else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
 			else if (value !== undefined && value !== null) node.setAttribute(key, value);
 		}

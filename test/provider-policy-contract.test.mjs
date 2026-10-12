@@ -62,7 +62,6 @@ for (const fixture of PROVIDER_POLICY_CONTRACT.orderingAndFallbackCases) {
     }
 
     assert.equal(result.ok, true);
-    if (!result.ok) return;
 
     const selectedModelRef =
       result.selection.modelRef ?? `${result.selection.provider}/${result.selection.id}`;
@@ -118,7 +117,6 @@ for (const role of ["oracle", "contrarian", "code-reviewer"]) {
           : "selectCodeReviewerModel";
     const automatic = await utils[method](ctx);
     assert.equal(automatic.ok, true);
-    if (!automatic.ok) return;
     assert.equal(
       automatic.selection.modelRef ?? `${automatic.selection.provider}/${automatic.selection.id}`,
       "openai/gpt-6-sol",

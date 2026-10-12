@@ -56,9 +56,20 @@ This preparation selects exactly 20 package/version pairs. The nine omitted work
 - The six-command pre-commit candidate validation passed: `npm run ci` reported 1,148 passed, 0 failed, and 1 skipped (1,149 total); the scoped native checks against a Pi `1.1.0` host passed for `@diegopetrucci/pi-quiet-tools@0.1.14`; `npm pack --dry-run --ignore-scripts --json --workspace extensions/quiet-tools` reported 4 files; the root `npm pack --dry-run --ignore-scripts --json` reported 167 files for `@diegopetrucci/pi-extensions@0.1.78`; `npm pack --dry-run --ignore-scripts --json --workspaces` covered all 28 workspace dry-runs; and `git diff --check` passed. The original raw CI log is `/var/folders/nq/fkrbfck57y91r169_934fxb80000gn/T/pi-bash-7f01387a37c30d2e.log`.
 - The separate human quiet-tools regular/fullscreen visual pass remains prior evidence only; this candidate adds no fresh visual, fleet, or publication claim.
 
-### Future final validation — not run here
+### Future merged-main final validation — not run here
 
-Fresh final validation must be separately authorized on the verified merged `main` tree. It must run the five-command preflight before tagging; no fresh CI, native-host, pack, fleet, or publication claim is made by this document until that gate passes.
+Before any tag or release creation, a separately authorized verified-`main` gate must pass these six commands, in order:
+
+- `npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org`
+- `npm run preflight:install-state`
+- `node scripts/check-quiet-tools-runtime.mjs --pi-package-dir "/absolute/path/to/pi-1.1.0/node_modules/@earendil-works/pi-coding-agent"`
+- `npm pack --dry-run --ignore-scripts --json --workspace extensions/quiet-tools`
+- `npm pack --dry-run --ignore-scripts --json`
+- `npm pack --dry-run --ignore-scripts --json --workspaces`
+
+The quoted `/absolute/path/to/pi-1.1.0/node_modules/@earendil-works/pi-coding-agent` value is a portable placeholder: replace it with the absolute installed package directory for the exact `@earendil-works/pi-coding-agent` 1.1.0 host, then verify that the checker reports `host=1.1.0`. Do not point it at a Pi agent/profile configuration directory, the collection development baseline, or another Pi version. The existing checker runs its offline, isolated runtime check; this gate makes no provider, TUI, profile, live-MCP, fresh visual, or fleet-certification claim.
+
+No fresh final-validation claim is made until all six commands actually pass on the verified merged `main` tree.
 
 The managed release marker follows:
 

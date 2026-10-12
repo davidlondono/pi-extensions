@@ -48,24 +48,27 @@
 - [x] The deterministic command `npm run prepare-release -- --input /tmp/tlhf-fe8g.9vJV57/release-input.json --write` passed. It selected exactly 20 targets, confirmed exact target versions were unpublished, synchronized the lockfile, and created four documents.
 - [x] The exact one-time locked dependency refresh passed: `npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org` (156 packages added; npm emitted a `node-domexception@1.0.0` deprecation warning).
 - [x] Narrow marker/version/lock/omission/dependency/fleet/source-hash/scope/whitespace checks passed: four matching markers, 20 coherent versions, four expected lock version leaves, nine unchanged omissions, unchanged dependency metadata, 29 unchanged fleet markers, unchanged quiet-tools hashes (`index.ts` `5ff96a197c87850c9875b11547fb7d98dc3cbab8d57949771ea0b3378f4fa9fd`; `README.md` `6b96857af46737c7340d6af900146d9026bdcb8a9e787c9c24c014ff5ccb26f3`), exact eight-file scope, no staged files, and clean whitespace.
-- [x] The candidate validation below is pre-commit evidence only; the separately authorized five-command verified-main gate remains unchecked.
+- [x] The candidate validation below is pre-commit evidence only; the separately authorized six-command verified-main gate remains unchecked.
 
 ### Latest pre-commit candidate validation — 2026-10-12
 
 - [x] The six-command pre-commit candidate validation passed: `npm run ci` reported 1,148 passed, 0 failed, and 1 skipped (1,149 total); the scoped native checks against a Pi `1.1.0` host passed for `@diegopetrucci/pi-quiet-tools@0.1.14`; `npm pack --dry-run --ignore-scripts --json --workspace extensions/quiet-tools` reported 4 files; the root `npm pack --dry-run --ignore-scripts --json` reported 167 files for `@diegopetrucci/pi-extensions@0.1.78`; `npm pack --dry-run --ignore-scripts --json --workspaces` covered all 28 workspace dry-runs; and `git diff --check` passed. The original raw CI log is `/var/folders/nq/fkrbfck57y91r169_934fxb80000gn/T/pi-bash-7f01387a37c30d2e.log`.
 - [x] The separate human quiet-tools regular/fullscreen visual pass remains prior evidence only; this candidate adds no fresh visual, fleet, or publication claim.
 
-### Future final validation — not run here
+### Future merged-main final validation — not run here
 
-Before any tag or release creation, a separately authorized verified-main-tree gate must pass all five commands below, in order:
+Before any tag or release creation, a separately authorized verified-`main` gate must pass these six commands, in order:
 
 - [ ] `npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org`
 - [ ] `npm run preflight:install-state`
+- [ ] `node scripts/check-quiet-tools-runtime.mjs --pi-package-dir "/absolute/path/to/pi-1.1.0/node_modules/@earendil-works/pi-coding-agent"`
 - [ ] `npm pack --dry-run --ignore-scripts --json --workspace extensions/quiet-tools`
 - [ ] `npm pack --dry-run --ignore-scripts --json`
 - [ ] `npm pack --dry-run --ignore-scripts --json --workspaces`
 
-No fresh final-validation claim is made until those commands actually pass on the verified merged `main` tree.
+The quoted `/absolute/path/to/pi-1.1.0/node_modules/@earendil-works/pi-coding-agent` value is a portable placeholder: replace it with the absolute installed package directory for the exact `@earendil-works/pi-coding-agent` 1.1.0 host, then verify that the checker reports `host=1.1.0`. Do not point it at a Pi agent/profile configuration directory, the collection development baseline, or another Pi version. The existing checker runs its offline, isolated runtime check; this gate makes no provider, TUI, profile, live-MCP, fresh visual, or fleet-certification claim.
+
+No fresh final-validation claim is made until all six commands actually pass on the verified merged `main` tree.
 
 ## Release title and body
 
@@ -74,11 +77,11 @@ No fresh final-validation claim is made until those commands actually pass on th
 
 ## Agent-safe follow-up actions
 
-All actions below are future actions requiring separate authorization; this preparation itself creates no commit, push, PR, tag, GitHub release, workflow dispatch, or npm publication.
+Within an explicitly approved release phase, an agent may auto-execute the agent-safe repository, CI, tagging, and GitHub-release steps below in this order, following `AGENTS.md`; do not require a new approval for each individual agent-safe step. TLH still requires explicit human approval before any commit-creating command, and the human-only dispatch, protected-environment approval, and npm-publication steps remain below. This current documentation correction grants no release authority: it creates no commit, push, PR, merge, preflight, verified-main gate, tag, workflow dispatch, GitHub release, publisher dry-run, or npm publication; the parent owns any separately authorized commit/push after fresh review.
 
 - [ ] Commit the eight task-owned files, push the non-`main` branch, open a PR targeting `main`, and wait for required CI before merging.
 - [ ] Verify the merged `main` commit is the intended frozen source and that no later merge intervened.
-- [ ] After separate authorization, run the five-command verified-main preflight above; all five must pass before tagging.
+- [ ] Run the six-command verified-main gate above; all six must pass before tagging.
 - [ ] Tag exactly `v0.1.78` from that verified `main` commit and push the tag.
 - [ ] Create exactly one non-draft GitHub release titled **MCP-aware subagents, always-on quiet tools, and 300k context defaults**, using `docs/github-release-v0.1.78.md` as the exact body.
 - [ ] After the tag and release, run `node scripts/publish-release.mjs v0.1.78 --dry-run`.

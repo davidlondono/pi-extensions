@@ -1046,14 +1046,6 @@ async function assertToolPathInsideCwd(
 ): Promise<string | undefined> {
   if (rawPath !== undefined && typeof rawPath !== "string")
     return `${toolName} path must be a string.`;
-  if (typeof rawPath === "string") {
-    const normalizedInput = rawPath.trim().startsWith("@")
-      ? rawPath.trim().slice(1)
-      : rawPath.trim();
-    if (/(^|[/\\])\.\.(?:[/\\]|$)/.test(normalizedInput)) {
-      return `${toolName} path must not traverse outside the local checkout.`;
-    }
-  }
   // A path is allowed if it resolves inside EITHER the realpath'd root (root) OR
   // the lexical cwd (lexicalCwd). This handles missing files in symlinked workspaces
   // where realpath fails and the lexical fallback starts with the alias prefix.

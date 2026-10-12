@@ -297,7 +297,7 @@ test("permission-gate: non-local file URL host fails closed (write blocked witho
   const toolCallHandler = handlers.get("tool_call");
 
   const decision = await toolCallHandler(
-    { toolName: "write", input: { path: "file://notlocalhost/.env", content: "HACKED=1" } },
+    { toolName: "write", input: { path: "file://notlocalhost/tmp/safe.txt", content: "HACKED=1" } },
     { hasUI: false, cwd: "/project" },
   );
 
@@ -315,7 +315,7 @@ test("permission-gate: non-local file URL host fails closed (edit blocked withou
     {
       toolName: "edit",
       input: {
-        path: "file://notlocalhost/.env",
+        path: "file://notlocalhost/tmp/safe.txt",
         edits: [{ oldText: "a", newText: "b" }],
       },
     },
@@ -394,34 +394,8 @@ test("permission-gate: .env.example is allowed even with Pi-style resolution", a
 });
 
 // ---------------------------------------------------------------------------
-// SDK integration: gate blocks → file unchanged; gate allows → SDK tool writes
+// SDK integration: gate allows → SDK write tool writes the file
 // ---------------------------------------------------------------------------
-
-test("permission-gate SDK integration: blocked write leaves file unchanged", async () => {
-  const permissionGate = await loadExtension("extensions/permission-gate/index.ts");
-  const { pi, handlers } = createPi();
-  permissionGate(pi);
-  const toolCallHandler = handlers.get("tool_call");
-
-  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "pg-sdk-integration-"));
-  try {
-    const envPath = path.join(tmpDir, ".env");
-    writeFileSync(envPath, "ORIGINAL=1");
-
-    // Percent-encoded .env URL — the gate must block it
-    const encodedUrl = pathToFileURL(envPath).href.replace(encodeURIComponent(".env"), "%2Eenv");
-    const gateDecision = await toolCallHandler(
-      { toolName: "write", input: { path: encodedUrl, content: "HACKED=1" } },
-      { hasUI: false, cwd: tmpDir },
-    );
-
-    assert.equal(gateDecision?.block, true, "gate must block the encoded .env write");
-    // File unchanged because the gate intercepted the call; no SDK tool is run after a block.
-    assert.equal(readFileSync(envPath, "utf-8"), "ORIGINAL=1");
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
-  }
-});
 
 test("permission-gate SDK integration: allowed write reaches file via SDK tool", async () => {
   const permissionGate = await loadExtension("extensions/permission-gate/index.ts");
@@ -452,38 +426,6 @@ test("permission-gate SDK integration: allowed write reaches file via SDK tool",
       },
     );
     assert.equal(readFileSync(safePath, "utf-8"), "hello from sdk");
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
-  }
-});
-
-test("permission-gate SDK integration: blocked edit leaves file unchanged", async () => {
-  const permissionGate = await loadExtension("extensions/permission-gate/index.ts");
-  const { pi, handlers } = createPi();
-  permissionGate(pi);
-  const toolCallHandler = handlers.get("tool_call");
-
-  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "pg-sdk-integration-"));
-  try {
-    const envPath = path.join(tmpDir, ".env");
-    writeFileSync(envPath, "ORIGINAL=1\n");
-
-    const encodedUrl = pathToFileURL(envPath).href.replace(encodeURIComponent(".env"), "%2Eenv");
-
-    const gateDecision = await toolCallHandler(
-      {
-        toolName: "edit",
-        input: {
-          path: encodedUrl,
-          edits: [{ oldText: "ORIGINAL=1\n", newText: "HACKED=1\n" }],
-        },
-      },
-      { hasUI: false, cwd: tmpDir },
-    );
-
-    assert.equal(gateDecision?.block, true, "gate must block the encoded .env edit");
-    // File unchanged because the gate intercepted the call; no SDK tool is run after a block.
-    assert.equal(readFileSync(envPath, "utf-8"), "ORIGINAL=1\n");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

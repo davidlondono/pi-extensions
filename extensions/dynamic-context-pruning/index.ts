@@ -1642,46 +1642,6 @@ export const errorPurgeStrategy: PruneStrategy = {
   },
 };
 
-// When the same file path is read and/or written multiple times in a
-// session, older read/write/edit tool *outputs* for that path can become
-// stale relative to a later operation. This strategy proposes replacing
-// those older outputs with a placeholder, per the following CONSERVATIVE,
-// binding rules (do not loosen without an architect decision):
-//
-//   1. A full-file read (no offset/limit args) is superseded by a LATER
-//      full-file read of the same normalized path.
-//   2. A partial read (offset/limit args present) is NOT superseded by a
-//      later partial read UNLESS the later read's range fully covers the
-//      earlier one's range. If range coverage can't be reliably determined
-//      from the args (e.g. earlier read has no limit — reads to EOF — but
-//      the later read is bounded), skip: do not propose supersession.
-//      Full-file reads are represented as the range [1, EOF); comparing
-//      that representation via the same coverage check naturally satisfies
-//      rule 1 as a special case of rule 2 (see `readRangeCovers`).
-//   3. ANY read of a path (full or partial) is superseded once a LATER
-//      *successful* (non-error) write/edit to that same path occurs — the
-//      old read output is now known-stale regardless of read-vs-read range
-//      comparisons. The placeholder explicitly notes the file has since
-//      changed. An ERRORED later write/edit does NOT count (the file may be
-//      unchanged; conservative).
-//   4. Older write/edit outputs for a path are superseded by a LATER
-//      *successful* write/edit to that same path (again, a later errored
-//      write/edit never supersedes). Write/edit tool outputs are usually
-//      small, so proposals are only ever emitted when there is a non-empty
-//      result to prune; the shared net-benefit gate additionally decides
-//      whether the estimated savings are worth the cache-bust cost.
-//
-// The NEWEST operation for a given path (by message order) is never
-// superseded/pruned, regardless of kind — there is nothing later to point
-// the placeholder at.
-//
-// Path extraction is defensive: pi's built-in `read`/`write`/`edit` tools
-// all accept a `path` argument (see packages/coding-agent/src/core/tools/
-// {read,write,edit}.ts); some tool-call renderers also fall back to a
-// legacy `file_path` name, and `filePath` is accepted as a further
-// defensive fallback. `bash` is explicitly OUT of scope: this strategy does
-// not attempt to parse shell commands for file paths.
-
 const SUPERSEDED_FILE_OPS_STRATEGY_ID = "superseded-file-ops";
 
 type FileOpKind = "read" | "write" | "edit";

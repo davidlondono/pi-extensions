@@ -2,11 +2,19 @@
 
 A pi extension that provides `/fast` and `/ultrafast` toggles for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models. It selects the provider-specific Fast-mode request shape from the currently selected model.
 
-For eligible direct OpenAI API models it injects:
+For eligible direct OpenAI API-key models it injects:
 
 ```json
 {
   "service_tier": "fast"
+}
+```
+
+For eligible direct OpenAI ChatGPT OAuth models it injects:
+
+```json
+{
+  "service_tier": "priority"
 }
 ```
 

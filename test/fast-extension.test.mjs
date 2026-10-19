@@ -339,6 +339,36 @@ test("fast enables direct GPT-6.1 Sol only after toggling", async (t) => {
   );
 });
 
+test("fast reports priority for direct OpenAI OAuth after toggling", async (t) => {
+  const { agentDir, projectDir } = setupTempDirs(t);
+  setAgentDir(t, agentDir);
+
+  const extension = await loadExtension("extensions/fast/index.ts");
+  const harness = createExtensionHarness();
+  extension(harness.pi);
+  const sessionStart = getHandler(harness, "session_start");
+  const beforeRequest = getHandler(harness, "before_provider_request");
+  const command = getCommand(harness);
+  const context = createContext({
+    cwd: projectDir,
+    model: { provider: "openai", api: "openai-responses", id: "gpt-6.1-sol" },
+    oauth: true,
+  });
+
+  await sessionStart({}, context.ctx);
+  assert.equal(await beforeRequest({ payload: { model: "gpt-6.1-sol" } }, context.ctx), undefined);
+
+  await command.handler("", context.ctx);
+  assert.match(
+    context.notifications.at(-1).message,
+    /active for openai\/gpt-6\.1-sol; requests will use service_tier=priority\./,
+  );
+  assert.deepEqual(await beforeRequest({ payload: { model: "gpt-6.1-sol" } }, context.ctx), {
+    model: "gpt-6.1-sol",
+    service_tier: "priority",
+  });
+});
+
 test("ultrafast commands toggle through one session-only implementation without Fast fallback", async (t) => {
   const { agentDir, projectDir } = setupTempDirs(t);
   setAgentDir(t, agentDir);

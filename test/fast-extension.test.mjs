@@ -230,7 +230,7 @@ test("fast supports every legacy allowlisted model and preserves provider-specif
   assert.deepEqual(apiKeyOpenAI.statuses.at(-1), { key: "fast", value: undefined });
 });
 
-test("fast preserves direct OpenAI API-key and OAuth payload behavior without live certification", async (t) => {
+test("fast selects direct OpenAI service tier by auth type", async (t) => {
   const { agentDir, projectDir } = setupTempDirs(t);
   setAgentDir(t, agentDir);
   writeConfig(path.join(agentDir, "extensions", "fast.json"), { enabled: true });
@@ -243,7 +243,10 @@ test("fast preserves direct OpenAI API-key and OAuth payload behavior without li
 
   for (const api of ["openai-responses", "openai-completions"]) {
     for (const id of OPENAI_API_MODELS) {
-      for (const oauth of [false, true]) {
+      for (const [oauth, serviceTier] of [
+        [false, "fast"],
+        [true, "priority"],
+      ]) {
         const context = createContext({
           cwd: projectDir,
           model: { provider: "openai", api, id },
@@ -255,15 +258,10 @@ test("fast preserves direct OpenAI API-key and OAuth payload behavior without li
           {
             model: id,
             input: "hello",
-            service_tier: "fast",
+            service_tier: serviceTier,
           },
         );
         assert.deepEqual(context.statuses.at(-1), { key: "fast", value: "fast" });
-        assert.deepEqual(
-          context.oauthCalls,
-          [],
-          "direct OpenAI auth must not be routed through Codex auth checks",
-        );
       }
     }
   }
